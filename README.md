@@ -1,3 +1,135 @@
+#!/usr/bin/env python3
+"""
+SIEM Alert Monitor & Integrity Auditor
+Continuously validates Git GPG commit signatures and immutable ledger integrity.
+Emits structured JSON alerts to syslog and SIEM ingestion endpoints.
+"""
+
+import subprocess
+import syslog
+import time
+import json
+import os
+from datetime import datetime, timezone
+
+# Configuration
+CHECK_INTERVAL_SECONDS = 60
+REPO_PATH = os.path.expanduser("~/master-hub")
+
+def log_siem_alert(severity: str, event_type: str, message: str):
+    """Formats and transmits structured alerts to system journal / SIEM."""
+    alert_payload = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "severity": severity,
+        "event_type": event_type,
+        "message": message,
+        "source_host": os.uname().nodename
+    }
+    
+    formatted_log = json.dumps(alert_payload)
+    
+    if severity == "CRITICAL":
+        syslog.syslog(syslog.LOG_CRIT, f"SIEM_ALERT: {formatted_log}")
+    elif severity == "WARNING":
+        syslog.syslog(syslog.LOG_WARNING, f"SIEM_ALERT: {formatted_log}")
+    else:
+        syslog.syslog(syslog.LOG_INFO, f"SIEM_ALERT: {formatted_log}")
+        
+    print(f"[{severity}] {event_type}: {message}")
+
+def verify_git_gpg_signature() -> bool:
+    """Checks the GPG signature validity of the latest repository commit."""
+    try:
+        os.chdir(REPO_PATH)
+        # --pretty=format:"%G?" returns 'G' (good), 'B' (bad), 'U' (untrusted), 'N' (none)
+        result = subprocess.run(
+            ["git", "log", "-1", "--pretty=format:%G?"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        sig_status = result.stdout.strip()
+        
+        if sig_status == 'G':
+            return True
+        elif sig_status in ['B', 'E']:
+            log_siem_alert("CRITICAL", "GPG_SIGNATURE_INVALID", f"Commit GPG signature verification failed with status: '{sig_status}'. Possible tampering detected.")
+            return False
+        else:
+            log_siem_alert("WARNING", "GPG_SIGNATURE_UNTRUSTED", f"Commit GPG signature untrusted or missing (status: '{sig_status}').")
+            return False
+    except Exception as e:
+        log_siem_alert("WARNING", "GIT_AUDIT_ERROR", f"Could not audit git repository: {e}")
+        return False
+
+def verify_ledger_integrity() -> bool:
+    """Invokes the internal ledger audit script to verify chain hashes."""
+    ledger_script = os.path.join(REPO_PATH, "scripts/ledger_audit.py")
+    if not os.path.exists(ledger_script):
+        return True # Skip if ledger script not present
+        
+    try:
+        result = subprocess.run(["python3", ledger_script], capture_output=True, text=True)
+        if result.returncode != 0 or "SECURITY ALERT" in result.stdout:
+            log_siem_alert("CRITICAL", "LEDGER_INTEGRITY_FAILURE", "Immutable timeline ledger audit failed hash validation check.")
+            return False
+    except Exception as e:
+        log_siem_alert("CRITICAL", "LEDGER_AUDIT_EXCEPTION", f"Failed to execute ledger audit: {e}")
+        return False
+    return True
+
+def main_loop():
+    syslog.openlog("siem-integrity-monitor", syslog.LOG_PID, syslog.LOG_DAEMON)
+    log_siem_alert("INFO", "MONITOR_STARTED", "SIEM Integrity & GPG Signature Monitor initialized.")
+    
+    while True:
+        verify_git_gpg_signature()
+        verify_ledger_integrity()
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+if __name__ == "__main__":
+    main_loop()
+<group name="enterprise_security, integrity_audit,">
+  <!-- Custom Decoder for SIEM JSON Alerts -->
+  <decoder name="siem-json-alert">
+    <prematch>SIEM_ALERT: </prematch>
+    <plugin_decoder>JSON_Decoder</plugin_decoder>
+  </decoder>
+
+  <!-- Rule for GPG Signature Failure / Tampering -->
+  <rule id="100501" level="12">
+    <decoded_as>siem-json-alert</decoded_as>
+    <field name="event_type">GPG_SIGNATURE_INVALID</field>
+    <description>SECURITY ALERT: Git commit GPG signature verification failed or signature was tampered with!</description>
+    <group>gpg_failure,pki_compromise,</group>
+  </rule>
+
+  <!-- Rule for Immutable Ledger Integrity Failure -->
+  <rule id="100502" level="14">
+    <decoded_as>siem-json-alert</decoded_as>
+    <field name="event_type">LEDGER_INTEGRITY_FAILURE</field>
+    <description>CRITICAL SECURITY ALERT: Immutable timeline ledger cryptographic hash chain breach detected!</description>
+    <group>ledger_tamper,blockchain_integrity,</group>
+  </rule>
+</group>
+[Unit]
+Description=Enterprise SIEM Integrity & GPG Signature Monitor
+After=network.target journald.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/re1Lucky365/master-hub
+ExecStart=/usr/bin/python3 /home/re1Lucky365/master-hub/scripts/siem_alert_monitor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+sudo systemctl daemon-reload
+sudo systemctl enable siem-integrity-monitor.service
+sudo systemctl start siem-integrity-monitor.service
+siem-integrity-monitor.service
 enterprise-security.service[Unit]
 Description=Enterprise Zero-Trust Security Platform & Docker Stack
 Requires=docker.service
