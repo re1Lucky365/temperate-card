@@ -1,5 +1,105 @@
 #!/usr/bin/env python3
 """
+SIEM Alert & Webhook Test Utility
+Simulates GPG signature failures and verifies webhook/syslog dispatch pipelines.
+"""
+
+import os
+import json
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
+
+# Load environment configuration
+WEBHOOK_URL = os.getenv("SIEM_WEBHOOK_URL", "")
+
+def simulate_webhook_dispatch(severity: str, event_type: str, message: str):
+    """Dispatches a test payload directly to the configured webhook endpoint."""
+    print(f"[*] Testing webhook dispatch to: {WEBHOOK_URL if WEBHOOK_URL else '[NO WEBHOOK URL CONFIGURED]'}")
+    
+    if not WEBHOOK_URL:
+        print("[-] Skipping live webhook test: SIEM_WEBHOOK_URL environment variable is not set.")
+        print("    Tip: Export it in your shell using: export SIEM_WEBHOOK_URL='your_url_here'")
+        return False
+
+    alert_payload = {
+        "text": f"🧪 *SIEM Test Alert [{severity}]* 🧪",
+        "attachments": [
+            {
+                "color": "danger" if severity == "CRITICAL" else "warning",
+                "fields": [
+                    {"title": "Event Type", "value": event_type, "short": True},
+                    {"title": "Host", "value": os.uname().nodename, "short": True},
+                    {"title": "Timestamp (UTC)", "value": datetime.now(timezone.utc).isoformat(), "short": False},
+                    {"title": "Details", "value": message, "short": False}
+                ]
+            }
+        ]
+    }
+
+    req = urllib.request.Request(
+        WEBHOOK_URL,
+        data=json.dumps(alert_payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            status_code = response.status
+            if status_code in [200, 201, 204]:
+                print(f"[+] Webhook test passed! HTTP Status: {status_code}")
+                return True
+            else:
+                print(f"[-] Webhook responded with unexpected status code: {status_code}")
+                return False
+    except Exception as e:
+        print(f"[-] Webhook connection failed: {e}")
+        return False
+
+def simulate_gpg_failure_detection():
+    """Simulates the exact detection logic when git log returns a bad signature ('B')."""
+    print("\n[*] Simulating GPG signature validation failure ('B' status)...")
+    
+    mock_git_status = 'B' # 'B' indicates bad/tampered GPG signature
+    
+    if mock_git_status in ['B', 'E']:
+        simulated_alert = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "severity": "CRITICAL",
+            "event_type": "GPG_SIGNATURE_INVALID",
+            "message": f"Commit GPG signature verification failed with status: '{mock_git_status}'. Possible tampering detected.",
+            "source_host": os.uname().nodename
+        }
+        print("[+] GPG failure simulation generated structured SIEM alert successfully:")
+        print(json.dumps(simulated_alert, indent=2))
+        return simulated_alert
+    else:
+        print("[-] Simulation error: Expected failure state not triggered.")
+        return None
+
+if __name__ == "__main__":
+    print("=== Initiating SIEM Alert & GPG Failure Simulation ===")
+    
+    # 1. Test Webhook Connectivity
+    simulate_webhook_dispatch(
+        severity="CRITICAL",
+        event_type="SIMULATION_TEST",
+        message="This is a test notification verifying the SIEM webhook integration for WK Precision Enterprise LLC."
+    )
+    
+    # 2. Simulate GPG Signature Failure
+    simulate_gpg_failure_detection()
+    
+    print("\n=== Simulation Complete ===")
+# Make executable
+chmod +x scripts/test_siem_alerts.py
+
+# Run with your webhook URL exported or set inline
+SIEM_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" python3 scripts/test_siem_alerts.py
+
+#!/usr/bin/env python3
+"""
 SIEM Alert Monitor & Webhook Dispatcher
 Continuously validates Git GPG commit signatures and immutable ledger integrity.
 Emits structured JSON alerts to syslog and dispatches critical webhooks.
