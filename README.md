@@ -1,3 +1,393 @@
+github.event.pull_request.head.sname: Enforce GPG Commit Signature Verification
+
+on:
+  pull_request:
+    branches: [ "main", "master" ]
+    types: [ opened, synchronize, reopened ]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  verify-gpg-signatures:
+    name: Cryptographic GPG Commit Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Full PR Commit History
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Import Authorized Public GPG Key
+        env:
+          GPG_PUBLIC_KEY: ${{ secrets.AUTHORIZED_GPG_PUBLIC_KEY }}
+        run: |
+          if [ -z "$GPG_PUBLIC_KEY" ]; then
+            echo "::error::AUTHORIZED_GPG_PUBLIC_KEY repository secret is missing."
+            exit 1
+          fi
+          echo "$GPG_PUBLIC_KEY" | gpg --batch --import
+
+      - name: Audit Every Commit in Pull Request Range
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          
+          echo "Auditing commits from $BASE_SHA to $HEAD_SHA..."
+          COMMITS=$(git rev-list "$BASE_SHA..$HEAD_SHA")
+          
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits found in range."
+            exit 0
+          fi
+
+          FAILED=0
+          for COMMIT in $COMMITS; do
+            SIG_STATUS=$(git log -1 --pretty=format:"%G?" "$COMMIT")
+            AUTHOR=$(git log -1 --pretty=format:"%an <%ae>" "$COMMIT")
+            SUBJECT=$(git log -1 --pretty=format:"%s" "$COMMIT")
+            
+            # 'G' = Good (valid) signature
+            if [ "$SIG_STATUS" != "G" ]; then
+              echo "::error::Commit $COMMIT ($SUBJECT) by $AUTHOR failed GPG signature verification (Status: '$SIG_STATUS')."
+              FAILED=1
+            else
+              echo "[VERIFIED] Commit $COMMIT ($SUBJECT) has a valid GPG signature."
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::Pull request rejected: One or more commits lack a valid, trusted GPG signature."
+            exit 1
+          fi
+ha
+gpg --armor --export evansrobert517@gmail.com
+name: Enforce GPG Commit Signature Verification
+
+on:
+  pull_request:
+    branches: [ "main", "master" ]
+    types: [ opened, synchronize, reopened ]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  verify-gpg-signatures:
+    name: Cryptographic GPG Commit Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Full PR Commit History
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Import Authorized Public GPG Key
+        env:
+          GPG_PUBLIC_KEY: ${{ secrets.AUTHORIZED_GPG_PUBLIC_KEY }}
+        run: |
+          if [ -z "$GPG_PUBLIC_KEY" ]; then
+            echo "::error::AUTHORIZED_GPG_PUBLIC_KEY repository secret is missing."
+            exit 1
+          fi
+          echo "$GPG_PUBLIC_KEY" | gpg --batch --import
+
+      - name: Audit Every Commit in Pull Request Range
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          
+          echo "Auditing commits from $BASE_SHA to $HEAD_SHA..."
+          COMMITS=$(git rev-list "$BASE_SHA..$HEAD_SHA")
+          
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits found in range."
+            exit 0
+          fi
+
+          FAILED=0
+          for COMMIT in $COMMITS; do
+            SIG_STATUS=$(git log -1 --pretty=format:"%G?" "$COMMIT")
+            AUTHOR=$(git log -1 --pretty=format:"%an <%ae>" "$COMMIT")
+            SUBJECT=$(git log -1 --pretty=format:"%s" "$COMMIT")
+            
+            # 'G' = Good (valid) signature
+            if [ "$SIG_STATUS" != "G" ]; then
+              echo "::error::Commit $COMMIT ($SUBJECT) by $AUTHOR failed GPG signature verification (Status: '$SIG_STATUS')."
+              FAILED=1
+            else
+              echo "[VERIFIED] Commit $COMMIT ($SUBJECT) has a valid GPG signature."
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::Pull request rejected: One or more commits lack a valid, trusted GPG signature."
+            exit 1
+          fi
+github.event.pull_request.head.sha#!/usr/bin/env python3
+"""
+SIEM Alert & Webhook Test Utility
+Simulates GPG signature failures and verifies webhook/syslog dispatch pipelines.
+"""
+
+import os
+import json
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
+
+# Load environment configuration
+WEBHOOK_URL = os.getenv("SIEM_WEBHOOK_URL", "")
+
+def simulate_webhook_dispatch(severity: str, event_type: str, message: str):
+    """Dispatches a test payload directly to the configured webhook endpoint."""
+    print(f"[*] Testing webhook dispatch to: {WEBHOOK_URL if WEBHOOK_URL else '[NO WEBHOOK URL CONFIGURED]'}")
+    
+    if not WEBHOOK_URL:
+        print("[-] Skipping live webhook test: SIEM_WEBHOOK_URL environment variable is not set.")
+        print("    Tip: Export it in your shell using: export SIEM_WEBHOOK_URL='your_url_here'")
+        return False
+
+    alert_payload = {
+        "text": f"🧪 *SIEM Test Alert [{severity}]* 🧪",
+        "attachments": [
+            {
+                "color": "danger" if severity == "CRITICAL" else "warning",
+                "fields": [
+                    {"title": "Event Type", "value": event_type, "short": True},
+                    {"title": "Host", "value": os.uname().nodename, "short": True},
+                    {"title": "Timestamp (UTC)", "value": datetime.now(timezone.utc).isoformat(), "short": False},
+                    {"title": "Details", "value": message, "short": False}
+                ]
+            }
+        ]
+    }
+
+    req = urllib.request.Request(
+        WEBHOOK_URL,
+        data=json.dumps(alert_payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            status_code = response.status
+            if status_code in [200, 201, 204]:
+                print(f"[+] Webhook test passed! HTTP Status: {status_code}")
+                return True
+            else:
+                print(f"[-] Webhook responded with unexpected status code: {status_code}")
+                return False
+    except Exception as e:
+        print(f"[-] Webhook connection failed: {e}")
+        return False
+
+def simulate_gpg_failure_detection():
+    """Simulates the exact detection logic when git log returns a bad signature ('B')."""
+    print("\n[*] Simulating GPG signature validation failure ('B' status)...")
+    
+    mock_git_status = 'B' # 'B' indicates bad/tampered GPG signature
+    
+    if mock_git_status in ['B', 'E']:
+        simulated_alert = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "severity": "CRITICAL",
+            "event_type": "GPG_SIGNATURE_INVALID",
+            "message": f"Commit GPG signature verification failed with status: '{mock_git_status}'. Possible tampering detected.",
+            "source_host": os.uname().nodename
+        }
+        print("[+] GPG failure simulation generated structured SIEM alert successfully:")
+        print(json.dumps(simulated_alert, indent=2))
+        return simulated_alert
+    else:
+        print("[-] Simulation error: Expected failure state not triggered.")
+        return None
+
+if __name__ == "__main__":
+    print("=== Initiating SIEM Alert & GPG Failure Simulation ===")
+    
+    # 1. Test Webhook Connectivity
+    simulate_webhook_dispatch(
+        severity="CRITICAL",
+        event_type="SIMULATION_TEST",
+        message="This is a test notification verifying the SIEM webhook integration for WK Precision Enterprise LLC."
+    )
+    
+    # 2. Simulate GPG Signature Failure
+    simulate_gpg_failure_detection()
+    
+    print("\n=== Simulation Complete ===")
+# Make executable
+chmod +x scripts/test_siem_alerts.py
+
+# Run with your webhook URL exported or set inline
+SIEM_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" python3 scripts/test_siem_alerts.py
+# Make executable
+chmod +x scripts/test_siem_alerts.py
+
+# Run with your webhook URL exported or set inline
+SIEM_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" python3 scripts/test_siem_alerts.py
+evansrobert517@gmail.com
+gpg --armor --export evansrobert517@gmail.com
+gpg --armor --export evansrobert517@gmail.com
+To enforce cryptographic GPG commit signature verification on every incoming pull request, save the following workflow configuration at .github/workflows/gpg-signature-enforcement.yml.
+This workflow fetches the full commit history of the pull request branch, imports your authorized public signing key, and verifies that every commit in the PR carries a valid, verified GPG signature (G status). If any commit is unsigned or tampered with, the pipeline fails immediately and blocks the merge.
+1. .github/workflows/gpg-signature-enforcement.yml
+name: Enforce GPG Commit Signature Verification
+
+on:
+  pull_request:
+    branches: [ "main", "master" ]
+    types: [ opened, synchronize, reopened ]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  verify-gpg-signatures:
+    name: Cryptographic GPG Commit Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Full PR Commit History
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Import Authorized Public GPG Key
+        env:
+          GPG_PUBLIC_KEY: ${{ secrets.AUTHORIZED_GPG_PUBLIC_KEY }}
+        run: |
+          if [ -z "$GPG_PUBLIC_KEY" ]; then
+            echo "::error::AUTHORIZED_GPG_PUBLIC_KEY repository secret is missing."
+            exit 1
+          fi
+          echo "$GPG_PUBLIC_KEY" | gpg --batch --import
+
+      - name: Audit Every Commit in Pull Request Range
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          
+          echo "Auditing commits from $BASE_SHA to $HEAD_SHA..."
+          COMMITS=$(git rev-list "$BASE_SHA..$HEAD_SHA")
+          
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits found in range."
+            exit 0
+          fi
+
+          FAILED=0
+          for COMMIT in $COMMITS; do
+            SIG_STATUS=$(git log -1 --pretty=format:"%G?" "$COMMIT")
+            AUTHOR=$(git log -1 --pretty=format:"%an <%ae>" "$COMMIT")
+            SUBJECT=$(git log -1 --pretty=format:"%s" "$COMMIT")
+            
+            # 'G' = Good (valid) signature
+            if [ "$SIG_STATUS" != "G" ]; then
+              echo "::error::Commit $COMMIT ($SUBJECT) by $AUTHOR failed GPG signature verification (Status: '$SIG_STATUS')."
+              FAILED=1
+            else
+              echo "[VERIFIED] Commit $COMMIT ($SUBJECT) has a valid GPG signature."
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::Pull request rejected: One or more commits lack a valid, trusted GPG signature."
+            exit 1
+          fi
+
+2. Repository Setup & Branch Protection Steps
+ * Add Your Public Key to GitHub Secrets:
+   * Export your armored public GPG key locally:
+     gpg --armor --export evansrobert517@gmail.com
+
+   * In your GitHub repository (re1Lucky365/master-hub), go to Settings → Secrets and variables → Actions and create a new repository secret named AUTHORIZED_GPG_PUBLIC_KEY containing the exported key block.
+ * Enforce Status Check in Branch Protection:
+   * Navigate to Settings → Branches → Branch protection rules for main.
+   * Enable Require status checks to pass before merging and select Cryptographic GPG Commit Audit.
+   * Also enable Require signed commits directly in GitHub's native branch protection settings for defense-in-depth enforcement.
+To enforce cryptographic GPG commit signature verification on every incoming pull request, save the following workflow configuration at .github/workflows/gpg-signature-enforcement.yml.
+This workflow fetches the full commit history of the pull request branch, imports your authorized public signing key, and verifies that every commit in the PR carries a valid, verified GPG signature (G status). If any commit is unsigned or tampered with, the pipeline fails immediately and blocks the merge.
+1. .github/workflows/gpg-signature-enforcement.yml
+name: Enforce GPG Commit Signature Verification
+
+on:
+  pull_request:
+    branches: [ "main", "master" ]
+    types: [ opened, synchronize, reopened ]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  verify-gpg-signatures:
+    name: Cryptographic GPG Commit Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Full PR Commit History
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Import Authorized Public GPG Key
+        env:
+          GPG_PUBLIC_KEY: ${{ secrets.AUTHORIZED_GPG_PUBLIC_KEY }}
+        run: |
+          if [ -z "$GPG_PUBLIC_KEY" ]; then
+            echo "::error::AUTHORIZED_GPG_PUBLIC_KEY repository secret is missing."
+            exit 1
+          fi
+          echo "$GPG_PUBLIC_KEY" | gpg --batch --import
+
+      - name: Audit Every Commit in Pull Request Range
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          
+          echo "Auditing commits from $BASE_SHA to $HEAD_SHA..."
+          COMMITS=$(git rev-list "$BASE_SHA..$HEAD_SHA")
+          
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits found in range."
+            exit 0
+          fi
+
+          FAILED=0
+          for COMMIT in $COMMITS; do
+            SIG_STATUS=$(git log -1 --pretty=format:"%G?" "$COMMIT")
+            AUTHOR=$(git log -1 --pretty=format:"%an <%ae>" "$COMMIT")
+            SUBJECT=$(git log -1 --pretty=format:"%s" "$COMMIT")
+            
+            # 'G' = Good (valid) signature
+            if [ "$SIG_STATUS" != "G" ]; then
+              echo "::error::Commit $COMMIT ($SUBJECT) by $AUTHOR failed GPG signature verification (Status: '$SIG_STATUS')."
+              FAILED=1
+            else
+              echo "[VERIFIED] Commit $COMMIT ($SUBJECT) has a valid GPG signature."
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::Pull request rejected: One or more commits lack a valid, trusted GPG signature."
+            exit 1
+          fi
+
+2. Repository Setup & Branch Protection Steps
+ * Add Your Public Key to GitHub Secrets:
+   * Export your armored public GPG key locally:
+     gpg --armor --export evansrobert517@gmail.com
+
+   * In your GitHub repository (re1Lucky365/master-hub), go to Settings → Secrets and variables → Actions and create a new repository secret named AUTHORIZED_GPG_PUBLIC_KEY containing the exported key block.
+ * Enforce Status Check in Branch Protection:
+   * Navigate to Settings → Branches → Branch protection rules for main.
+   * Enable Require status checks to pass before merging and select Cryptographic GPG Commit Audit.
+   * Also enable Require signed commits directly in GitHub's native branch protection settings for defense-in-depth enforcement.
+
 #!/usr/bin/env python3
 """
 SIEM Alert & Webhook Test Utility
