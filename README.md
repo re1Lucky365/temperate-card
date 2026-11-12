@@ -1,5 +1,156 @@
 #!/usr/bin/env python3
 """
+SIEM Alert Monitor & Webhook Dispatcher
+Continuously validates Git GPG commit signatures and immutable ledger integrity.
+Emits structured JSON alerts to syslog and dispatches critical webhooks.
+"""
+
+import subprocess
+import syslog
+import time
+import json
+import os
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
+
+# Configuration
+CHECK_INTERVAL_SECONDS = 60
+REPO_PATH = os.path.expanduser("~/master-hub")
+WEBHOOK_URL = os.getenv("SIEM_WEBHOOK_URL", "") # Set via environment variable for security
+
+def send_webhook_notification(severity: str, event_type: str, message: str):
+    """Dispatches a JSON payload to the configured external webhook endpoint if critical."""
+    if not WEBHOOK_URL:
+        return # Skip if no webhook URL is configured
+
+    if severity not in ["CRITICAL", "WARNING"]:
+        return # Only dispatch warnings or critical alerts to external channels
+
+    alert_payload = {
+        "text": f"🚨 *SIEM Security Alert [{severity}]* 🚨",
+        "attachments": [
+            {
+                "color": "danger" if severity == "CRITICAL" else "warning",
+                "fields": [
+                    {"title": "Event Type", "value": event_type, "short": True},
+                    {"title": "Host", "value": os.uname().nodename, "short": True},
+                    {"title": "Timestamp (UTC)", "value": datetime.now(timezone.utc).isoformat(), "short": False},
+                    {"title": "Details", "value": message, "short": False}
+                ]
+            }
+        ]
+    }
+
+    req = urllib.request.Request(
+        WEBHOOK_URL,
+        data=json.dumps(alert_payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.status not in [200, 201, 204]:
+                syslog.syslog(syslog.LOG_ERR, f"Failed to dispatch webhook. Status: {response.status}")
+    except Exception as e:
+        syslog.syslog(syslog.LOG_ERR, f"Exception while sending SIEM webhook: {e}")
+
+def log_siem_alert(severity: str, event_type: str, message: str):
+    """Formats, logs, and optionally dispatches structured SIEM alerts."""
+    alert_payload = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "severity": severity,
+        "event_type": event_type,
+        "message": message,
+        "source_host": os.uname().nodename
+    }
+    
+    formatted_log = json.dumps(alert_payload)
+    
+    if severity == "CRITICAL":
+        syslog.syslog(syslog.LOG_CRIT, f"SIEM_ALERT: {formatted_log}")
+    elif severity == "WARNING":
+        syslog.syslog(syslog.LOG_WARNING, f"SIEM_ALERT: {formatted_log}")
+    else:
+        syslog.syslog(syslog.LOG_INFO, f"SIEM_ALERT: {formatted_log}")
+        
+    print(f"[{severity}] {event_type}: {message}")
+    
+    # Dispatch external notification
+    send_webhook_notification(severity, event_type, message)
+
+def verify_git_gpg_signature() -> bool:
+    """Checks the GPG signature validity of the latest repository commit."""
+    try:
+        os.chdir(REPO_PATH)
+        result = subprocess.run(
+            ["git", "log", "-1", "--pretty=format:%G?"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        sig_status = result.stdout.strip()
+        
+        if sig_status == 'G':
+            return True
+        elif sig_status in ['B', 'E']:
+            log_siem_alert("CRITICAL", "GPG_SIGNATURE_INVALID", f"Commit GPG signature verification failed with status: '{sig_status}'. Possible tampering detected.")
+            return False
+        else:
+            log_siem_alert("WARNING", "GPG_SIGNATURE_UNTRUSTED", f"Commit GPG signature untrusted or missing (status: '{sig_status}').")
+            return False
+    except Exception as e:
+        log_siem_alert("WARNING", "GIT_AUDIT_ERROR", f"Could not audit git repository: {e}")
+        return False
+
+def verify_ledger_integrity() -> bool:
+    """Invokes the internal ledger audit script to verify chain hashes."""
+    ledger_script = os.path.join(REPO_PATH, "scripts/ledger_audit.py")
+    if not os.path.exists(ledger_script):
+        return True
+        
+    try:
+        result = subprocess.run(["python3", ledger_script], capture_output=True, text=True)
+        if result.returncode != 0 or "SECURITY ALERT" in result.stdout:
+            log_siem_alert("CRITICAL", "LEDGER_INTEGRITY_FAILURE", "Immutable timeline ledger audit failed hash validation check.")
+            return False
+    except Exception as e:
+        log_siem_alert("CRITICAL", "LEDGER_AUDIT_EXCEPTION", f"Failed to execute ledger audit: {e}")
+        return False
+    return True
+
+def main_loop():
+    syslog.openlog("siem-integrity-monitor", syslog.LOG_PID, syslog.LOG_DAEMON)
+    log_siem_alert("INFO", "MONITOR_STARTED", "SIEM Integrity & GPG Signature Monitor initialized with webhook dispatcher.")
+    
+    while True:
+        verify_git_gpg_signature()
+        verify_ledger_integrity()
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+if __name__ == "__main__":
+    main_loop()
+[Unit]
+Description=Enterprise SIEM Integrity & GPG Signature Monitor
+After=network.target journald.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/re1Lucky365/master-hub
+Environment="SIEM_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+ExecStart=/usr/bin/python3 /home/re1Lucky365/master-hub/scripts/siem_alert_monitor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+sudo systemctl daemon-reload
+sudo systemctl restart siem-integrity-monitor.service
+
+#!/usr/bin/env python3
+"""
 SIEM Alert Monitor & Integrity Auditor
 Continuously validates Git GPG commit signatures and immutable ledger integrity.
 Emits structured JSON alerts to syslog and SIEM ingestion endpoints.
