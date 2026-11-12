@@ -1,3 +1,31 @@
+[Unit]
+Description=Enterprise Zero-Trust Security Platform & Docker Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/re1Lucky365/master-hub
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+# 1. Reload systemd manager to recognize the new service file
+sudo systemctl daemon-reload
+
+# 2. Enable the service to start automatically on system boot
+sudo systemctl enable enterprise-security.service
+
+# 3. Start the service immediately
+sudo systemctl start enterprise-security.service
+
+# 4. Verify service status and running containers
+sudo systemctl status enterprise-security.service
+
 devsecops-tools/
 ├── authorized_vuln_audit.sh   # Legal target-verified vulnerability scan wrapper
 ├── sast_security_scan.py      # Python orchestrator for code analysis & dependency checks
