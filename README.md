@@ -1,3 +1,331 @@
+enterprise-security.service[Unit]
+Description=Enterprise Zero-Trust Security Platform & Docker Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/re1Lucky365/master-hub
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+# 1. Reload systemd manager to recognize the new service file
+sudo systemctl daemon-reload
+
+# 2. Enable the service to start automatically on system boot
+sudo systemctl enable enterprise-security.service
+
+# 3. Start the service immediately
+sudo systemctl start enterprise-security.service
+
+# 4. Verify service status and running containers
+sudo systemctl status enterprise-security.service
+network-online.target
+version: '3.9'
+
+services:
+  vault-kms:
+    image: hashicorp/vault:latest
+    container_name: enterprise-kms-vault
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-vault"
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_ROOT_TOKEN}
+      VAULT_ADDR: "http://0.0.0.0:8200"
+    ports:
+      - "127.0.0.1:8200:8200"
+    networks:
+      - zero_trust_internal
+
+  credential-sso-service:
+    build: ./credential-vault-sso
+    container_name: enterprise-credential-manager
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-sso"
+    environment:
+      VAULT_ADDR: "http://vault-kms:8200"
+      ENFORCE_WEBAUTHN: "true"
+    depends_on:
+      - vault-kms
+    networks:
+      - zero_trust_internal
+
+  timeline-ledger-service:
+    build: ./time-tracking-ledger
+    container_name: enterprise-time-tracker
+    logging:
+      driver: "journald"
+      options:
+        tag:
+ "enterprise-ledger"
+version: '3.9'
+
+services:
+  vault-kms:
+    image: hashicorp/vault:latest
+    container_name: enterprise-kms-vault
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-vault"
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_ROOT_TOKEN}
+      VAULT_ADDR: "http://0.0.0.0:8200"
+    ports:
+      - "127.0.0.1:8200:8200"
+    networks:
+      - zero_trust_internal
+
+  credential-sso-service:
+    build: ./credential-vault-sso
+    container_name: enterprise-credential-manager
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-sso"
+    environment:
+      VAULT_ADDR: "http://vault-kms:8200"
+      ENFORCE_WEBAUTHN: "true"
+    depends_on:
+      - vault-kms
+    networks:
+      - zero_trust_internal
+
+  timeline-ledger-service:
+    build: ./time-tracking-ledger
+    container_name: enterprise-time-tracker
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-ledger"
+    volumes:
+      - timeline_data:/app/ledger_storage
+    networks:
+      - zero_trust_internal
+
+  threat-detector-ai:
+    build: ./threat-detectors
+    container_name: enterprise-ai-threat-engine
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-threat"
+    environment:
+      PRIVACY_MODE: "GDPR_CCPA_STRICT"
+      PII_RETENTION: "false"
+    networks:
+      - zero_trust_internal
+
+networks:
+  zero_trust_internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  timeline_data:
+
+    volumes:
+      - timeline_data:/app/ledger_storage
+    networks:
+      - zero_trust_internal
+
+  threat-detector-ai:
+    build: ./threat-detectors
+    container_name: enterprise-ai-threat-engine
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-threat"
+    environment:
+      PRIVACY_MODE: "GDPR_CCPA_STRICT"
+      PII_RETENTION: "false"
+    networks:
+      - zero_trust_internal
+
+networks:
+  zero_trust_internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  timeline_data:
+[Journal]
+Storage=persistent
+SystemMaxUse=500M
+SystemKeepFree=1G
+MaxFileSec=1month
+Compress=yes
+ForwardToSyslog=no
+dai
+sudo logrotate -dv /etc/logrotate.d/enterprise-security
+l
+version: '3.9'
+
+services:
+  vault-kms:
+    image: hashicorp/vault:latest
+    container_name: enterprise-kms-vault
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-vault"
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_ROOT_TOKEN}
+      VAULT_ADDR: "http://0.0.0.0:8200"
+    ports:
+      - "127.0.0.1:8200:8200"
+    networks:
+      - zero_trust_internal
+
+  credential-sso-service:
+    build: ./credential-vault-sso
+    container_name: enterprise-credential-manager
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-sso"
+    environment:
+      VAULT_ADDR: "http://vault-kms:8200"
+      ENFORCE_WEBAUTHN: "true"
+    depends_on:
+      - vault-kms
+    networks:
+      - zero_trust_internal
+
+  timeline-ledger-service:
+    build: ./time-tracking-ledger
+    container_name: enterprise-time-tracker
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-ledger"
+    volumes:
+      - timeline_data:/app/ledger_storage
+    networks:
+      - zero_trust_internal
+
+  threat-detector-ai:
+    build: ./threat-detectors
+    container_name: enterprise-ai-threat-engine
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-threat"
+    environment:
+      PRIVACY_MODE: "GDPR_CCPA_STRICT"
+      PII_RETENTION: "false"
+    networks:
+      - zero_trust_internal
+
+networks:
+  zero_trust_internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  timeline_data:
+version: '3.9'
+
+services:
+  vault-kms:
+    image: hashicorp/vault:latest
+    container_name: enterprise-kms-vault
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-vault"
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_ROOT_TOKEN}
+      VAULT_ADDR: "http://0.0.0.0:8200"
+    ports:
+      - "127.0.0.1:8200:8200"
+    networks:
+      - zero_trust_internal
+
+  credential-sso-service:
+    build: ./credential-vault-sso
+    container_name: enterprise-credential-manager
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-sso"
+    environment:
+      VAULT_ADDR: "http://vault-kms:8200"
+      ENFORCE_WEBAUTHN: "true"
+    depends_on:
+      - vault-kms
+    networks:
+      - zero_trust_internal
+
+  timeline-ledger-service:
+    build: ./time-tracking-ledger
+    container_name: enterprise-time-tracker
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-ledger"
+    volumes:
+      - timeline_data:/app/ledger_storage
+    networks:
+      - zero_trust_internal
+
+  threat-detector-ai:
+    build: ./threat-detectors
+    container_name: enterprise-ai-threat-engine
+    logging:
+      driver: "journald"
+      options:
+        tag: "enterprise-threat"
+    environment:
+      PRIVACY_MODE: "GDPR_CCPA_STRICT"
+      PII_RETENTION: "false"
+    networks:
+      - zero_trust_internal
+
+networks:
+  zero_trust_internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  timeline_data:
+[Journal]
+Storage=persistent
+SystemMaxUse=500M
+SystemKeepFree=1G
+MaxFileSec=1month
+Compress=yes
+ForwardToSyslog=no
+sudo systemctl restart systemd-journald
+/home/re1Lucky365/master-hub/ledger_storage/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+    sharedscripts
+}
+sudo logrotate -dv /etc/logrotate.d/enterprise-security
+
 [Unit]
 Description=Enterprise Zero-Trust Security Platform & Docker Stack
 Requires=docker.service
